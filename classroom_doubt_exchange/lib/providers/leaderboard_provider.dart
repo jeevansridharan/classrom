@@ -1,6 +1,7 @@
 // lib/providers/leaderboard_provider.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/question_model.dart';
 import '../models/user_model.dart';
 
 final leaderboardProvider =
