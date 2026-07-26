@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ──────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // ─── Users ────────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      // Anyone signed in can read public profile info
+      allow read: if isSignedIn();
+
+      // Only the user themselves can create/update their profile
+      allow create: if isSignedIn() && isOwner(uid)
+        && request.resource.data.keys().hasAll(['uid', 'handle', 'email', 'reputationPoints', 'createdAt'])
+        && request.resource.data.uid == uid;
+
+      allow update: if isSignedIn() && isOwner(uid)
+        // Prevent self-inflating reputation directly
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['reputationPoints']);
+
+      // Only Cloud Functions can modify reputationPoints
+      // (In production, set reputationPoints writes to only be done via Admin SDK)
+      allow delete: if false;
+    }
+
+    // ─── Questions ────────────────────────────────────────────────────────────
+    match /questions/{questionId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.keys().hasAll(
+            ['authorUid', 'title', 'body', 'tags', 'voteCount', 'answerCount', 'createdAt', 'updatedAt', 'isResolved']
+           )
+        && request.resource.data.voteCount == 0
+        && request.resource.data.answerCount == 0;
+
+      allow update: if isSignedIn() && (
+        // Author can update certain fields
+        (resource.data.authorUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['isResolved', 'updatedAt', 'title', 'body', 'tags']))
+        ||
+        // Any signed-in user can increment viewCount, voteCount, answerCount
+        request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['viewCount', 'voteCount', 'answerCount', 'updatedAt', 'isResolved'])
+      );
+
+      allow delete: if isSignedIn()
+        && resource.data.authorUid == request.auth.uid;
+
+      // ── Votes subcollection ──────────────────────────────────────────────
+      match /votes/{voterUid} {
+        allow read: if isSignedIn();
+        // Can only write your own vote document
+        allow write: if isSignedIn() && isOwner(voterUid)
+          && (request.resource == null ||
+              (request.resource.data.value == 1 || request.resource.data.value == -1));
+        allow delete: if isSignedIn() && isOwner(voterUid);
+      }
+    }
+
+    // ─── Answers ──────────────────────────────────────────────────────────────
+    match /answers/{answerId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.keys().hasAll(
+            ['questionId', 'authorUid', 'body', 'voteCount', 'isAccepted', 'createdAt']
+           )
+        && request.resource.data.voteCount == 0;
+
+      allow update: if isSignedIn() && (
+        request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['voteCount', 'isAccepted'])
+        ||
+        (resource.data.authorUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['body']))
+      );
+
+      allow delete: if isSignedIn()
+        && resource.data.authorUid == request.auth.uid;
+
+      // ── Votes subcollection ──────────────────────────────────────────────
+      match /votes/{voterUid} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && isOwner(voterUid)
+          && (request.resource == null ||
+              (request.resource.data.value == 1 || request.resource.data.value == -1));
+        allow delete: if isSignedIn() && isOwner(voterUid);
+      }
+    }
+
+    // ─── Tags ────────────────────────────────────────────────────────────────
+    match /tags/{tagId} {
+      allow read: if isSignedIn();
+      // Tags are created/updated when questions are posted (merge set)
+      allow write: if isSignedIn();
+    }
+  }
+}
