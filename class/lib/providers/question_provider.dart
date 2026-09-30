@@ -7,6 +7,7 @@ import '../services/vote_service.dart';
 import '../services/search_service.dart';
 import '../services/storage_service.dart';
 import '../services/duplicate_detection_service.dart';
+import 'classroom_provider.dart';
 
 // ── Service Providers ──────────────────────────────────────────────────────────
 final questionServiceProvider =
@@ -27,20 +28,27 @@ final storageServiceProvider =
 final duplicateDetectionProvider =
     Provider<DuplicateDetectionService>((ref) => DuplicateDetectionService());
 
-// ── Sort Order ─────────────────────────────────────────────────────────────────
+// ── Filters & Sort Order ───────────────────────────────────────────────────────
 final questionSortProvider =
     StateProvider<QuestionSortOrder>((ref) => QuestionSortOrder.recent);
 
 final selectedTagProvider = StateProvider<String?>((ref) => null);
+final selectedCategoryProvider = StateProvider<String>((ref) => 'All');
 
-// ── Questions Feed ─────────────────────────────────────────────────────────────
+// ── Questions Feed (Classroom Scoped) ──────────────────────────────────────────
 final questionsStreamProvider =
     StreamProvider.autoDispose<List<QuestionModel>>((ref) {
   final sort = ref.watch(questionSortProvider);
   final tag = ref.watch(selectedTagProvider);
-  return ref
-      .watch(questionServiceProvider)
-      .questionsStream(sort: sort, tag: tag);
+  final selectedClassroom = ref.watch(selectedClassroomProvider);
+  final category = ref.watch(selectedCategoryProvider);
+
+  return ref.watch(questionServiceProvider).questionsStream(
+        sort: sort,
+        tag: tag,
+        classroomId: selectedClassroom?.id,
+        category: category,
+      );
 });
 
 // ── Single Question ────────────────────────────────────────────────────────────

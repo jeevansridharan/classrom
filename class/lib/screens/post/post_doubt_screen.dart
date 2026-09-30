@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/question_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/classroom_provider.dart';
 import '../../providers/question_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/tag_chip.dart';
@@ -23,12 +24,21 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
   final _titleCtrl = TextEditingController();
   final _bodyCtrl = TextEditingController();
   final List<String> _selectedTags = [];
+  String _selectedCategory = 'General';
   File? _selectedImage;
   bool _loading = false;
   bool _checkingDuplicates = false;
   List<QuestionModel> _duplicateSuggestions = [];
   bool _showDuplicateWarning = false;
   bool _duplicatesChecked = false;
+
+  final List<String> _categories = [
+    'General',
+    'Assignment',
+    'Exam',
+    'Lab',
+    'Concept',
+  ];
 
   @override
   void dispose() {
@@ -70,10 +80,9 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Run duplicate check first if not done
     if (!_duplicatesChecked) {
       await _checkDuplicates();
-      if (_showDuplicateWarning) return; // Let user see warning first
+      if (_showDuplicateWarning) return;
     }
 
     setState(() => _loading = true);
@@ -81,6 +90,7 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
       final profile = ref.read(currentUserProfileProvider).valueOrNull;
       final storage = ref.read(storageServiceProvider);
       final qSvc = ref.read(questionServiceProvider);
+      final selectedClassroom = ref.read(selectedClassroomProvider);
 
       String? imageUrl;
       if (_selectedImage != null) {
@@ -93,12 +103,14 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
         tags: _selectedTags,
         imageUrl: imageUrl,
         authorHandle: profile?.handle ?? 'Anonymous',
+        classroomId: selectedClassroom?.id,
+        category: _selectedCategory,
       );
 
       if (mounted) {
         context.pushReplacement('/question/$id');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Doubt posted! 🎉')),
+          const SnackBar(content: Text('Doubt posted successfully! 🎉')),
         );
       }
     } catch (e) {
@@ -124,9 +136,22 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedClassroom = ref.watch(selectedClassroomProvider);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Post a Doubt'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Post a Doubt'),
+            Text(
+              selectedClassroom != null
+                  ? 'Target: ${selectedClassroom.name}'
+                  : 'Target: All Classrooms',
+              style: AppTextStyles.caption.copyWith(color: AppColors.primaryLight),
+            ),
+          ],
+        ),
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
           onPressed: () => context.pop(),
@@ -161,6 +186,30 @@ class _PostDoubtScreenState extends ConsumerState<PostDoubtScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Category selection ──────────────────────────────────────────
+              _buildSectionLabel('Category', 'Select question type'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: _categories.map((cat) {
+                  final isSelected = _selectedCategory == cat;
+                  return ChoiceChip(
+                    label: Text(cat),
+                    selected: isSelected,
+                    selectedColor: AppColors.primary,
+                    backgroundColor: AppColors.surfaceVariant,
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.white : AppColors.textSecondary,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    onSelected: (selected) {
+                      if (selected) setState(() => _selectedCategory = cat);
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 20),
+
               // ── Duplicate warning ──────────────────────────────────────────
               if (_showDuplicateWarning) ...[
                 _buildDuplicateWarning(),

@@ -16,6 +16,8 @@ class QuestionService {
     required List<String> tags,
     String? imageUrl,
     required String authorHandle,
+    String? classroomId,
+    String category = 'General',
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -24,7 +26,7 @@ class QuestionService {
     final ref = _db.collection('questions').doc();
 
     final questionMap = {
-      'authorUid': uid, // stored but never surfaced in QuestionModel
+      'authorUid': uid,
       'authorHandle': authorHandle,
       'title': title.trim(),
       'body': body.trim(),
@@ -34,16 +36,17 @@ class QuestionService {
       'viewCount': 0,
       'answerCount': 0,
       'isResolved': false,
+      'classroomId': classroomId,
+      'category': category,
       'createdAt': Timestamp.fromDate(now),
       'updatedAt': Timestamp.fromDate(now),
-      // Full-text search tokens (title words lowercase)
       'searchTokens': _buildSearchTokens(title, body, tags),
     };
 
-    await ref.set(questionMap);
+    final batch = _db.batch();
+    batch.set(ref, questionMap);
 
     // Update tag counts
-    final batch = _db.batch();
     for (final tag in tags) {
       final tagRef = _db.collection('tags').doc(tag);
       batch.set(
@@ -52,20 +55,38 @@ class QuestionService {
         SetOptions(merge: true),
       );
     }
-    await batch.commit();
 
+    // Update classroom questionCount if associated with a classroom
+    if (classroomId != null && classroomId.isNotEmpty) {
+      final classroomRef = _db.collection('classrooms').doc(classroomId);
+      batch.update(classroomRef, {
+        'questionCount': FieldValue.increment(1),
+      });
+    }
+
+    await batch.commit();
     return ref.id;
   }
 
-  // ── Fetch Questions (Feed) ─────────────────────────────────────────────────
+  // ── Fetch Questions (Feed with Classroom Scope) ────────────────────────────
   Stream<List<QuestionModel>> questionsStream({
     QuestionSortOrder sort = QuestionSortOrder.recent,
     String? tag,
-    int limit = 20,
+    String? classroomId,
+    String? category,
+    int limit = 30,
   }) {
     Query<Map<String, dynamic>> query = _db.collection('questions');
 
-    if (tag != null) {
+    if (classroomId != null && classroomId.isNotEmpty) {
+      query = query.where('classroomId', isEqualTo: classroomId);
+    }
+
+    if (category != null && category != 'All') {
+      query = query.where('category', isEqualTo: category);
+    }
+
+    if (tag != null && tag.isNotEmpty) {
       query = query.where('tags', arrayContains: tag);
     }
 
@@ -111,7 +132,6 @@ class QuestionService {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
 
-    // Verify ownership
     final doc = await _db.collection('questions').doc(questionId).get();
     if (doc['authorUid'] != uid) throw Exception('Not authorized');
 
@@ -146,7 +166,6 @@ class QuestionService {
       final cleaned = word.replaceAll(RegExp(r'[^a-z0-9]'), '');
       if (cleaned.length >= 3) {
         tokens.add(cleaned);
-        // Add prefix tokens for autocomplete
         for (int i = 3; i <= cleaned.length; i++) {
           tokens.add(cleaned.substring(0, i));
         }

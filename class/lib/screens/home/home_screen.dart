@@ -1,7 +1,10 @@
 // lib/screens/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../providers/classroom_provider.dart';
 import '../../providers/question_provider.dart';
+import '../../services/notification_service.dart';
 import '../../services/question_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/empty_state.dart';
@@ -17,42 +20,98 @@ class HomeScreen extends ConsumerWidget {
     final selectedTag = ref.watch(selectedTagProvider);
     final questionsAsync = ref.watch(questionsStreamProvider);
     final tagsAsync = ref.watch(popularTagsProvider);
+    final selectedClassroom = ref.watch(selectedClassroomProvider);
+    final unreadNotificationsAsync = ref.watch(notificationServiceProvider).unreadCountStream();
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [AppColors.primary, AppColors.primaryLight],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+        title: GestureDetector(
+          onTap: () => context.push('/classrooms'),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [AppColors.primary, AppColors.primaryLight],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                borderRadius: BorderRadius.circular(9),
+                child: const Icon(Icons.school_rounded,
+                    color: Colors.white, size: 18),
               ),
-              child: const Icon(Icons.school_rounded,
-                  color: Colors.white, size: 18),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Doubt Exchange', style: AppTextStyles.titleLarge),
-                Text('Your classroom Q&A',
-                    style: AppTextStyles.labelSmall
-                        .copyWith(color: AppColors.textMuted)),
-              ],
-            ),
-          ],
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            selectedClassroom?.name ?? 'DecentraClass',
+                            style: AppTextStyles.titleLarge,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.keyboard_arrow_down_rounded,
+                            size: 18, color: AppColors.primaryLight),
+                      ],
+                    ),
+                    Text(
+                      selectedClassroom != null
+                          ? 'Code: ${selectedClassroom.code}'
+                          : 'All Classrooms Feed',
+                      style: AppTextStyles.labelSmall
+                          .copyWith(color: AppColors.textMuted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none_rounded),
-            tooltip: 'Notifications',
-            onPressed: () {},
+          StreamBuilder<int>(
+            stream: unreadNotificationsAsync,
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.notifications_none_rounded),
+                    tooltip: 'Notifications',
+                    onPressed: () => context.push('/notifications'),
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: AppColors.error,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
         bottom: PreferredSize(
@@ -88,9 +147,9 @@ class HomeScreen extends ConsumerWidget {
                       title: 'No doubts yet!',
                       subtitle: selectedTag != null
                           ? 'No questions tagged "$selectedTag" yet.'
-                          : 'Be the first to post a doubt.',
+                          : 'Be the first to post an academic doubt.',
                       actionLabel: 'Post a Doubt',
-                      onAction: () {},
+                      onAction: () => context.push('/post'),
                     ),
                   );
                 }
@@ -100,7 +159,10 @@ class HomeScreen extends ConsumerWidget {
                       if (i == questions.length) {
                         return const SizedBox(height: 100);
                       }
-                      return QuestionCard(question: questions[i]);
+                      return QuestionCard(
+                        question: questions[i],
+                        onTap: () => context.push('/question/${questions[i].id}'),
+                      );
                     },
                     childCount: questions.length + 1,
                   ),
@@ -129,7 +191,7 @@ class HomeScreen extends ConsumerWidget {
   ) {
     return Container(
       height: 44,
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: AppColors.divider)),
       ),
       child: Row(
@@ -171,7 +233,6 @@ class HomeScreen extends ConsumerWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // "All" chip
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: GestureDetector(

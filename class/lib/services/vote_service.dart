@@ -72,25 +72,6 @@ class VoteService {
       // Update target voteCount
       tx.update(docRef, {'voteCount': FieldValue.increment(voteDelta)});
 
-      // Update author reputation (if author is found and not self-voting)
-      if (authorUid != null && authorUid != uid) {
-        final authorRef = _db.collection('users').doc(authorUid);
-        tx.update(authorRef, {
-          'reputationPoints': FieldValue.increment(repDelta),
-        });
-
-        // Voter also gets a small reputation change for voting
-        final voterRef = _db.collection('users').doc(uid);
-        final voterRepDelta =
-            value == 1 ? _upvoteReputation : _downvoteReputation;
-        if (prevValue == 0) {
-          // Only award voter rep on new votes, not toggles
-          tx.update(voterRef, {
-            'reputationPoints': FieldValue.increment(voterRepDelta),
-          });
-        }
-      }
-
       return newValue;
     });
   }

@@ -1,12 +1,15 @@
 // lib/screens/detail/question_detail_screen.dart
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import '../../providers/auth_provider.dart';
 import '../../providers/question_provider.dart';
 import '../../services/answer_service.dart';
+import '../../services/knowledge_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/vote_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/empty_state.dart';
@@ -30,7 +33,6 @@ class _QuestionDetailScreenState
   @override
   void initState() {
     super.initState();
-    // Increment view count once
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref
           .read(questionServiceProvider)
@@ -52,11 +54,14 @@ class _QuestionDetailScreenState
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => context.pop(),
         ),
-        title: const Text('Question'),
+        title: const Text('Question Detail'),
         actions: [
           questionAsync.when(
             data: (q) {
               if (q == null) return const SizedBox();
+              final isAuthor = currentUser != null && currentUser.uid == q.authorUid;
+              if (!isAuthor) return const SizedBox();
+
               return IconButton(
                 icon: Icon(
                   q.isResolved
@@ -71,7 +76,13 @@ class _QuestionDetailScreenState
                     await ref
                         .read(questionServiceProvider)
                         .markResolved(widget.questionId, !q.isResolved);
-                  } catch (_) {}
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error: ${e.toString()}')),
+                      );
+                    }
+                  }
                 },
               );
             },
@@ -85,20 +96,43 @@ class _QuestionDetailScreenState
           if (question == null) {
             return const ErrorState(message: 'Question not found');
           }
+
+          final isQuestionAuthor =
+              currentUser != null && currentUser.uid == question.authorUid;
+
           return Column(
             children: [
-              // ── Scrollable content ────────────────────────────────────────
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ── Tags ───────────────────────────────────────────────
-                      if (question.tags.isNotEmpty) ...[
-                        TagChipRow(tags: question.tags),
-                        const SizedBox(height: 12),
-                      ],
+                      // ── Tags & Category ──────────────────────────────────
+                      Row(
+                        children: [
+                          if (question.category.isNotEmpty) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                question.category,
+                                style: AppTextStyles.labelSmall.copyWith(
+                                  color: AppColors.primaryLight,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          if (question.tags.isNotEmpty)
+                            Expanded(child: TagChipRow(tags: question.tags)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
 
                       // ── Title ──────────────────────────────────────────────
                       Text(question.title, style: AppTextStyles.headlineMedium),
@@ -122,7 +156,7 @@ class _QuestionDetailScreenState
                             style: AppTextStyles.labelSmall,
                           ),
                           const Spacer(),
-                          Icon(Icons.remove_red_eye_outlined,
+                          const Icon(Icons.remove_red_eye_outlined,
                               size: 13, color: AppColors.textMuted),
                           const SizedBox(width: 4),
                           Text(
@@ -185,12 +219,12 @@ class _QuestionDetailScreenState
                                 border: Border.all(
                                     color: AppColors.accent.withOpacity(0.4)),
                               ),
-                              child: Row(
+                              child: const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.check_circle_rounded,
+                                  Icon(Icons.check_circle_rounded,
                                       size: 14, color: AppColors.accent),
-                                  const SizedBox(width: 4),
+                                  SizedBox(width: 4),
                                   Text(
                                     'Solved',
                                     style: TextStyle(
@@ -205,6 +239,9 @@ class _QuestionDetailScreenState
                         ],
                       ),
 
+                      // ── Verified Knowledge Preservation Card ─────────────────
+                      _buildKnowledgeRecordCard(question.id),
+
                       const SizedBox(height: 28),
                       _buildAnswersHeader(answersAsync),
 
@@ -212,13 +249,12 @@ class _QuestionDetailScreenState
                       answersAsync.when(
                         data: (answers) {
                           if (answers.isEmpty) {
-                            return Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 24),
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
                               child: EmptyState(
                                 icon: Icons.chat_bubble_outline_rounded,
                                 title: 'No answers yet',
-                                subtitle: 'Be the first to help!',
+                                subtitle: 'Be the first to help answer this doubt!',
                               ),
                             );
                           }
@@ -227,14 +263,43 @@ class _QuestionDetailScreenState
                                 .map((a) => AnswerTile(
                                       answer: a,
                                       questionId: widget.questionId,
-                                      isQuestionAuthor: false,
-                                      onAccept: () {
-                                        ref
+                                      isQuestionAuthor: isQuestionAuthor,
+                                      onAccept: () async {
+                                        // 1. Accept Answer in Firestore
+                                        await ref
                                             .read(answerServiceProvider)
                                             .acceptAnswer(
                                               questionId: widget.questionId,
                                               answerId: a.id,
                                             );
+
+                                        // 2. Create Decentralized Knowledge Record (SHA-256)
+                                        await ref
+                                            .read(knowledgeServiceProvider)
+                                            .createKnowledgeRecord(
+                                              question: question,
+                                              answer: a,
+                                            );
+
+                                        // 3. Send Notification to Answer Author
+                                        ref
+                                            .read(notificationServiceProvider)
+                                            .sendNotification(
+                                              recipientUserId: a.authorHandle ?? '',
+                                              title: 'Answer Accepted!',
+                                              body: 'Your answer on "${question.title}" was accepted as the solution.',
+                                              type: 'accepted',
+                                              referenceId: question.id,
+                                            );
+
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('Accepted answer & preserved knowledge record!'),
+                                              backgroundColor: AppColors.accent,
+                                            ),
+                                          );
+                                        }
                                       },
                                     ))
                                 .toList(),
@@ -246,8 +311,7 @@ class _QuestionDetailScreenState
                             child: CircularProgressIndicator(),
                           ),
                         ),
-                        error: (e, _) =>
-                            ErrorState(message: e.toString()),
+                        error: (e, _) => ErrorState(message: e.toString()),
                       ),
 
                       const SizedBox(height: 16),
@@ -256,15 +320,76 @@ class _QuestionDetailScreenState
                 ),
               ),
 
-              // ── Answer composer (sticky bottom) ───────────────────────────
               AnswerComposer(questionId: widget.questionId),
             ],
           );
         },
-        loading: () =>
-            const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => ErrorState(message: e.toString()),
       ),
+    );
+  }
+
+  Widget _buildKnowledgeRecordCard(String questionId) {
+    final recordAsync = ref.watch(knowledgeServiceProvider).getKnowledgeRecordStream(questionId);
+
+    return StreamBuilder(
+      stream: recordAsync,
+      builder: (context, snapshot) {
+        final record = snapshot.data;
+        if (record == null) return const SizedBox.shrink();
+
+        return Container(
+          margin: const EdgeInsets.only(top: 16),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.accent.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.accent.withOpacity(0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.verified_rounded, color: AppColors.accent, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Preserved Knowledge Record',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: AppColors.accentLight,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'This Q&A solution is cryptographically hashed for tamper-proof classroom knowledge indexing.',
+                style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                'SHA-256 Hash: ${record.contentHash}',
+                style: AppTextStyles.caption.copyWith(
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              if (record.ipfsCid != null)
+                SelectableText(
+                  'IPFS CID: ${record.ipfsCid}',
+                  style: AppTextStyles.caption.copyWith(
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -10,6 +10,8 @@ class UserModel extends Equatable {
   final String? avatarUrl;
   final DateTime createdAt;
   final List<String> badges;
+  final String role; // 'STUDENT', 'FACULTY', 'MODERATOR'
+  final List<String> joinedClassroomIds;
 
   const UserModel({
     required this.uid,
@@ -19,6 +21,8 @@ class UserModel extends Equatable {
     this.avatarUrl,
     required this.createdAt,
     this.badges = const [],
+    this.role = 'STUDENT',
+    this.joinedClassroomIds = const [],
   });
 
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
@@ -31,6 +35,8 @@ class UserModel extends Equatable {
       avatarUrl: data['avatarUrl'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       badges: List<String>.from(data['badges'] as List? ?? []),
+      role: data['role'] as String? ?? 'STUDENT',
+      joinedClassroomIds: List<String>.from(data['joinedClassroomIds'] as List? ?? []),
     );
   }
 
@@ -42,6 +48,8 @@ class UserModel extends Equatable {
         'avatarUrl': avatarUrl,
         'createdAt': Timestamp.fromDate(createdAt),
         'badges': badges,
+        'role': role,
+        'joinedClassroomIds': joinedClassroomIds,
       };
 
   UserModel copyWith({
@@ -50,6 +58,8 @@ class UserModel extends Equatable {
     int? reputationPoints,
     String? avatarUrl,
     List<String>? badges,
+    String? role,
+    List<String>? joinedClassroomIds,
   }) =>
       UserModel(
         uid: uid,
@@ -59,6 +69,8 @@ class UserModel extends Equatable {
         avatarUrl: avatarUrl ?? this.avatarUrl,
         createdAt: createdAt,
         badges: badges ?? this.badges,
+        role: role ?? this.role,
+        joinedClassroomIds: joinedClassroomIds ?? this.joinedClassroomIds,
       );
 
   // ── Reputation tier ────────────────────────────────────────────────────────
@@ -70,6 +82,8 @@ class UserModel extends Equatable {
     return 'Newcomer';
   }
 
+  bool get isFaculty => role == 'FACULTY' || role == 'MODERATOR';
+
   @override
-  List<Object?> get props => [uid, handle, email, reputationPoints, avatarUrl];
+  List<Object?> get props => [uid, handle, email, reputationPoints, avatarUrl, role, joinedClassroomIds];
 }
